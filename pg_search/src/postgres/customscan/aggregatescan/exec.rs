@@ -36,6 +36,23 @@ use tantivy::aggregation::metric::SingleMetricResult as TantivySingleMetricResul
 use tantivy::aggregation::Key;
 use tantivy::schema::OwnedValue;
 
+/// Extract bucket entries from a grouped aggregation result (Terms or Histogram).
+/// Returns None if the result is not a bucket type we handle.
+fn extract_grouped_buckets(agg_result: &TantivyAggregationResult) -> Option<Vec<&BucketEntry>> {
+    match agg_result {
+        TantivyAggregationResult::BucketResult(BucketResult::Terms { buckets, .. }) => {
+            Some(buckets.iter().collect())
+        }
+        TantivyAggregationResult::BucketResult(BucketResult::Histogram { buckets, .. }) => {
+            Some(match buckets {
+                BucketEntries::Vec(v) => v.iter().collect(),
+                BucketEntries::HashMap(m) => m.values().collect(),
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Unified result type for aggregates
 /// Can hold either a standard metric (f64) or a custom aggregate (JSON)
 #[derive(Debug, Clone)]
@@ -269,20 +286,12 @@ impl AggregationResults {
         key_accumulator: Vec<TantivyValue>,
         out: &mut Vec<AggregationResultsRow>,
     ) {
-        // look only at the "grouped" terms bucket at this level
-        // Extract buckets from either Terms or Histogram result
-        let buckets: Vec<&BucketEntry> = match map.get(GroupedKey::NAME) {
-            Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
-                buckets, ..
-            })) => buckets.iter().collect(),
-            Some(TantivyAggregationResult::BucketResult(BucketResult::Histogram {
-                buckets,
-                ..
-            })) => match buckets {
-                BucketEntries::Vec(v) => v.iter().collect(),
-                BucketEntries::HashMap(m) => m.values().collect(),
-            },
-            _ => return,
+        // look only at the "grouped" bucket at this level (Terms or Histogram)
+        let Some(grouped_result) = map.get(GroupedKey::NAME) else {
+            return;
+        };
+        let Some(buckets) = extract_grouped_buckets(grouped_result) else {
+            return;
         };
 
         for bucket_entry in buckets {
@@ -298,20 +307,12 @@ impl AggregationResults {
             new_keys.push(key_val);
 
             // check if this bucket has a child "grouped" bucket (Terms or Histogram)
-            let has_child_grouped = match bucket_entry.sub_aggregation.0.get(GroupedKey::NAME) {
-                Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
-                    buckets,
-                    ..
-                })) => !buckets.is_empty(),
-                Some(TantivyAggregationResult::BucketResult(BucketResult::Histogram {
-                    buckets,
-                    ..
-                })) => match buckets {
-                    BucketEntries::Vec(v) => !v.is_empty(),
-                    BucketEntries::HashMap(m) => !m.is_empty(),
-                },
-                _ => false,
-            };
+            let has_child_grouped = bucket_entry
+                .sub_aggregation
+                .0
+                .get(GroupedKey::NAME)
+                .and_then(extract_grouped_buckets)
+                .is_some_and(|b| !b.is_empty());
 
             if has_child_grouped {
                 // not a leaf yet; keep descending
@@ -343,19 +344,12 @@ impl AggregationResults {
 
             // traverse down into nested "grouped" buckets following group_keys
             for key in &row.group_keys {
-                let buckets: Vec<&BucketEntry> = match current.get(GroupedKey::NAME) {
-                    Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
-                        buckets,
-                        ..
-                    })) => buckets.iter().collect(),
-                    Some(TantivyAggregationResult::BucketResult(BucketResult::Histogram {
-                        buckets,
-                        ..
-                    })) => match buckets {
-                        BucketEntries::Vec(v) => v.iter().collect(),
-                        BucketEntries::HashMap(m) => m.values().collect(),
-                    },
-                    _ => {
+                let buckets = match current
+                    .get(GroupedKey::NAME)
+                    .and_then(extract_grouped_buckets)
+                {
+                    Some(b) => b,
+                    None => {
                         found = false;
                         break;
                     }
@@ -529,18 +523,12 @@ impl AggregationResults {
                     let mut matched = true;
 
                     for key in &row.group_keys {
-                        let buckets: Vec<&BucketEntry> = match current.get(GroupedKey::NAME) {
-                            Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
-                                buckets,
-                                ..
-                            })) => buckets.iter().collect(),
-                            Some(TantivyAggregationResult::BucketResult(
-                                BucketResult::Histogram { buckets, .. },
-                            )) => match buckets {
-                                BucketEntries::Vec(v) => v.iter().collect(),
-                                BucketEntries::HashMap(m) => m.values().collect(),
-                            },
-                            _ => {
+                        let buckets = match current
+                            .get(GroupedKey::NAME)
+                            .and_then(extract_grouped_buckets)
+                        {
+                            Some(b) => b,
+                            None => {
                                 matched = false;
                                 break;
                             }
