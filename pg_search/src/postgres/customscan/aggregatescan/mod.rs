@@ -1260,6 +1260,14 @@ unsafe fn group_key_to_datum(
                 .try_into_datum(pgrx::PgOid::from(expected_typoid))
                 .expect("should be able to convert datetime to datum")
         }
+        OwnedValue::F64(millis) => {
+            // DateHistogram returns epoch milliseconds as F64
+            let nanos = (*millis as i64) * 1_000_000;
+            let datetime = tantivy::DateTime::from_timestamp_nanos(nanos);
+            TantivyValue(OwnedValue::Date(datetime))
+                .try_into_datum(pgrx::PgOid::from(expected_typoid))
+                .expect("should be able to convert datetime to datum")
+        }
         _ => key
             .try_into_datum(pgrx::PgOid::from(expected_typoid))
             .expect("should be able to convert to datum"),

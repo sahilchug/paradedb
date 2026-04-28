@@ -24,6 +24,7 @@ use crate::postgres::customscan::basescan::exec_methods::fast_fields::find_match
 use crate::postgres::customscan::builders::custom_path::CustomPathBuilder;
 use crate::postgres::customscan::qual_inspect::QualExtractState;
 use crate::postgres::customscan::CustomScan;
+use crate::postgres::datetime::extract_date_func_field;
 use crate::postgres::utils::strip_unnest_and_relabel;
 use crate::postgres::var::{find_one_var_and_fieldname, VarContext};
 use crate::postgres::PgSearchRelation;
@@ -156,6 +157,7 @@ impl CustomScanClause<AggregateScan> for TargetList {
         self.groupby.add_to_custom_path(builder)
     }
 
+    //
     fn from_pg(
         args: &Self::Args,
         heap_rti: pg_sys::Index,
@@ -204,6 +206,10 @@ impl CustomScanClause<AggregateScan> for TargetList {
                     find_one_var_and_fieldname(var_context, actual_expr)
                 {
                     Some(field_name.into_inner())
+                } else if let Some((name, _)) =
+                    extract_date_func_field(var_context, actual_expr, args.root)
+                {
+                    Some(name)
                 } else {
                     find_matching_fast_field(
                         actual_expr,

@@ -21,6 +21,7 @@ use crate::postgres::customscan::aggregatescan::{
 use crate::postgres::customscan::basescan::exec_methods::fast_fields::find_matching_fast_field;
 use crate::postgres::customscan::builders::custom_path::CustomPathBuilder;
 use crate::postgres::customscan::CustomScan;
+use crate::postgres::datetime::extract_date_func_field;
 use crate::postgres::utils::strip_unnest_and_relabel;
 use crate::postgres::var::{find_one_var_and_fieldname, find_var_relation, VarContext};
 use crate::postgres::PgSearchRelation;
@@ -31,6 +32,7 @@ use pgrx::PgList;
 pub struct GroupingColumn {
     pub field_name: String,
     pub attno: pg_sys::AttrNumber,
+    pub date_interval: Option<String>,
 }
 
 #[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -102,7 +104,7 @@ impl CustomScanClause<AggregateScan> for GroupByClause {
 
                     let var_context = VarContext::from_planner(args.root);
 
-                    let (field_name, attno) = if let Some((var, field_name)) =
+                    let (field_name, attno, date_interval) = if let Some((var, field_name)) =
                         find_one_var_and_fieldname(var_context, expr)
                     {
                         // JSON operator expression or complex field access
@@ -112,14 +114,18 @@ impl CustomScanClause<AggregateScan> for GroupByClause {
                                 Some("find_var_relation returned InvalidOid for var".to_string());
                             continue;
                         }
-                        (field_name.to_string(), attno)
+                        (field_name.to_string(), attno, None)
                     } else if let Some(ff) = find_matching_fast_field(
                         expr,
                         &index_expressions,
                         schema.clone(),
                         _heap_rti,
                     ) {
-                        (ff.name(), 0) // Complex expressions don't have a single attno
+                        (ff.name(), 0, None) // Complex expressions don't have a single attno
+                    } else if let Some((name, attno)) =
+                        extract_date_func_field(var_context, expr, args.root)
+                    {
+                        (name, attno, Some("1d".to_string())) // DATE() truncates to day
                     } else {
                         last_error =
                             Some("could not resolve grouping column from expression".to_string());
@@ -157,7 +163,11 @@ impl CustomScanClause<AggregateScan> for GroupByClause {
                                 );
                             }
 
-                            grouping_columns.push(GroupingColumn { field_name, attno });
+                            grouping_columns.push(GroupingColumn {
+                                field_name,
+                                attno,
+                                date_interval,
+                            });
                             found_valid_column = true;
                             break; // Found a valid grouping column for this pathkey
                         } else {

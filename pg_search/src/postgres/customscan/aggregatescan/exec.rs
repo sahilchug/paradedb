@@ -30,7 +30,7 @@ use pgrx::{check_for_interrupts, pg_sys, IntoDatum, JsonB};
 
 use tantivy::aggregation::agg_result::{
     AggregationResult as TantivyAggregationResult, AggregationResults as TantivyAggregationResults,
-    BucketResult, MetricResult as TantivyMetricResult,
+    BucketEntries, BucketEntry, BucketResult, MetricResult as TantivyMetricResult,
 };
 use tantivy::aggregation::metric::SingleMetricResult as TantivySingleMetricResult;
 use tantivy::aggregation::Key;
@@ -270,42 +270,59 @@ impl AggregationResults {
         out: &mut Vec<AggregationResultsRow>,
     ) {
         // look only at the "grouped" terms bucket at this level
-        if let Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
-            buckets, ..
-        })) = map.get(GroupedKey::NAME)
-        {
-            for bucket_entry in buckets {
-                check_for_interrupts!();
-                // extend the key path with this bucket's key
-                let mut new_keys = key_accumulator.clone();
-                let key_val = match &bucket_entry.key {
-                    Key::Str(s) => TantivyValue(OwnedValue::Str(s.clone())),
-                    Key::I64(i) => TantivyValue(OwnedValue::I64(*i)),
-                    Key::U64(u) => TantivyValue(OwnedValue::U64(*u)),
-                    Key::F64(f) => TantivyValue(OwnedValue::F64(*f)),
-                };
-                new_keys.push(key_val);
+        // Extract buckets from either Terms or Histogram result
+        let buckets: Vec<&BucketEntry> = match map.get(GroupedKey::NAME) {
+            Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
+                buckets, ..
+            })) => buckets.iter().collect(),
+            Some(TantivyAggregationResult::BucketResult(BucketResult::Histogram {
+                buckets,
+                ..
+            })) => match buckets {
+                BucketEntries::Vec(v) => v.iter().collect(),
+                BucketEntries::HashMap(m) => m.values().collect(),
+            },
+            _ => return,
+        };
 
-                // check if this bucket has a child "grouped" terms bucket
-                let has_child_grouped = match bucket_entry.sub_aggregation.0.get(GroupedKey::NAME) {
-                    Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
-                        buckets,
-                        ..
-                    })) => !buckets.is_empty(),
-                    _ => false,
-                };
+        for bucket_entry in buckets {
+            check_for_interrupts!();
+            // extend the key path with this bucket's key
+            let mut new_keys = key_accumulator.clone();
+            let key_val = match &bucket_entry.key {
+                Key::Str(s) => TantivyValue(OwnedValue::Str(s.clone())),
+                Key::I64(i) => TantivyValue(OwnedValue::I64(*i)),
+                Key::U64(u) => TantivyValue(OwnedValue::U64(*u)),
+                Key::F64(f) => TantivyValue(OwnedValue::F64(*f)),
+            };
+            new_keys.push(key_val);
 
-                if has_child_grouped {
-                    // not a leaf yet; keep descending
-                    Self::collect_group_keys(&bucket_entry.sub_aggregation.0, new_keys, out);
-                } else {
-                    // leaf: emit ONLY the deepest group path
-                    out.push(AggregationResultsRow {
-                        group_keys: new_keys,
-                        aggregates: Vec::new(),
-                        doc_count: Some(bucket_entry.doc_count),
-                    });
-                }
+            // check if this bucket has a child "grouped" bucket (Terms or Histogram)
+            let has_child_grouped = match bucket_entry.sub_aggregation.0.get(GroupedKey::NAME) {
+                Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
+                    buckets,
+                    ..
+                })) => !buckets.is_empty(),
+                Some(TantivyAggregationResult::BucketResult(BucketResult::Histogram {
+                    buckets,
+                    ..
+                })) => match buckets {
+                    BucketEntries::Vec(v) => !v.is_empty(),
+                    BucketEntries::HashMap(m) => !m.is_empty(),
+                },
+                _ => false,
+            };
+
+            if has_child_grouped {
+                // not a leaf yet; keep descending
+                Self::collect_group_keys(&bucket_entry.sub_aggregation.0, new_keys, out);
+            } else {
+                // leaf: emit ONLY the deepest group path
+                out.push(AggregationResultsRow {
+                    group_keys: new_keys,
+                    aggregates: Vec::new(),
+                    doc_count: Some(bucket_entry.doc_count),
+                });
             }
         }
     }
@@ -326,28 +343,40 @@ impl AggregationResults {
 
             // traverse down into nested "grouped" buckets following group_keys
             for key in &row.group_keys {
-                if let Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
-                    buckets,
-                    ..
-                })) = current.get(GroupedKey::NAME)
-                {
-                    // find the bucket whose key matches this level
-                    let maybe_bucket = buckets.iter().find(|b| match (&b.key, &key.0) {
-                        (Key::Str(s), OwnedValue::Str(v)) => s == v,
-                        (Key::I64(i), OwnedValue::I64(v)) => i == v,
-                        (Key::U64(i), OwnedValue::U64(v)) => i == v,
-                        (Key::F64(i), OwnedValue::F64(v)) => i == v,
-                        _ => false,
-                    });
-
-                    if let Some(bucket) = maybe_bucket {
-                        // descend into this bucket’s sub-aggregations
-                        current = &bucket.sub_aggregation.0;
-                    } else {
-                        // no matching bucket found — bail out early
+                let buckets: Vec<&BucketEntry> = match current.get(GroupedKey::NAME) {
+                    Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
+                        buckets,
+                        ..
+                    })) => buckets.iter().collect(),
+                    Some(TantivyAggregationResult::BucketResult(BucketResult::Histogram {
+                        buckets,
+                        ..
+                    })) => match buckets {
+                        BucketEntries::Vec(v) => v.iter().collect(),
+                        BucketEntries::HashMap(m) => m.values().collect(),
+                    },
+                    _ => {
                         found = false;
                         break;
                     }
+                };
+
+                // find the bucket whose key matches this level
+                let maybe_bucket = buckets.iter().find(|b| match (&b.key, &key.0) {
+                    (Key::Str(s), OwnedValue::Str(v)) => s == v,
+                    (Key::I64(i), OwnedValue::I64(v)) => i == v,
+                    (Key::U64(i), OwnedValue::U64(v)) => i == v,
+                    (Key::F64(i), OwnedValue::F64(v)) => i == v,
+                    _ => false,
+                });
+
+                if let Some(bucket) = maybe_bucket {
+                    // descend into this bucket’s sub-aggregations
+                    current = &bucket.sub_aggregation.0;
+                } else {
+                    // no matching bucket found — bail out early
+                    found = false;
+                    break;
                 }
             }
 
@@ -500,23 +529,34 @@ impl AggregationResults {
                     let mut matched = true;
 
                     for key in &row.group_keys {
-                        if let Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
-                            buckets,
-                            ..
-                        })) = current.get(GroupedKey::NAME)
-                        {
-                            if let Some(bucket) = buckets.iter().find(|b| match (&b.key, &key.0) {
-                                (Key::Str(s), OwnedValue::Str(v)) => s == v,
-                                (Key::I64(i), OwnedValue::I64(v)) => i == v,
-                                (Key::U64(i), OwnedValue::U64(v)) => i == v,
-                                (Key::F64(i), OwnedValue::F64(v)) => i == v,
-                                _ => false,
-                            }) {
-                                current = &bucket.sub_aggregation.0;
-                            } else {
+                        let buckets: Vec<&BucketEntry> = match current.get(GroupedKey::NAME) {
+                            Some(TantivyAggregationResult::BucketResult(BucketResult::Terms {
+                                buckets,
+                                ..
+                            })) => buckets.iter().collect(),
+                            Some(TantivyAggregationResult::BucketResult(
+                                BucketResult::Histogram { buckets, .. },
+                            )) => match buckets {
+                                BucketEntries::Vec(v) => v.iter().collect(),
+                                BucketEntries::HashMap(m) => m.values().collect(),
+                            },
+                            _ => {
                                 matched = false;
                                 break;
                             }
+                        };
+
+                        if let Some(bucket) = buckets.iter().find(|b| match (&b.key, &key.0) {
+                            (Key::Str(s), OwnedValue::Str(v)) => s == v,
+                            (Key::I64(i), OwnedValue::I64(v)) => i == v,
+                            (Key::U64(i), OwnedValue::U64(v)) => i == v,
+                            (Key::F64(i), OwnedValue::F64(v)) => i == v,
+                            _ => false,
+                        }) {
+                            current = &bucket.sub_aggregation.0;
+                        } else {
+                            matched = false;
+                            break;
                         }
                     }
 

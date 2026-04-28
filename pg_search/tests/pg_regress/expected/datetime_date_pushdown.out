@@ -1,0 +1,179 @@
+-- =====================================================================
+-- Test Suite for DATE() Function Pushdown in GROUP BY
+-- =====================================================================
+-- This test verifies that GROUP BY DATE(timestamp_col) is pushed down
+-- to Tantivy using DateHistogramAggregation instead of TermsAggregation.
+CREATE EXTENSION IF NOT EXISTS pg_search;
+SET paradedb.enable_aggregate_custom_scan TO on;
+-- =====================================================================
+-- Test Data Setup
+-- =====================================================================
+DROP TABLE IF EXISTS mock_items CASCADE;
+CREATE TABLE mock_items (
+    id SERIAL PRIMARY KEY,
+    description TEXT,
+    rating INT,
+    created_at TIMESTAMP
+);
+-- Multiple rows per day with different times to verify day-level bucketing.
+-- Gap on Jan 4 to verify empty buckets are excluded (min_doc_count=1).
+INSERT INTO mock_items (description, rating, created_at) VALUES
+    ('Ergonomic keyboard',  5, '2024-01-01 08:00:00'),
+    ('Wireless mouse',      4, '2024-01-01 14:30:00'),
+    ('USB hub',             3, '2024-01-01 23:59:59'),
+    ('Monitor stand',       5, '2024-01-02 09:00:00'),
+    ('Laptop bag',          4, '2024-01-02 17:00:00'),
+    ('Webcam',              3, '2024-01-03 10:00:00'),
+    ('Desk lamp',           2, '2024-01-05 08:00:00'),
+    ('Cable organizer',     4, '2024-01-05 12:00:00'),
+    ('Mouse pad',           5, '2024-01-05 18:00:00'),
+    ('Headphones',          4, '2024-01-06 11:00:00');
+CREATE INDEX mock_items_idx ON mock_items
+USING bm25 (id, description, rating, created_at)
+WITH (
+    key_field = 'id',
+    text_fields = '{"description": {}}',
+    numeric_fields = '{"rating": {"fast": true}}',
+    datetime_fields = '{"created_at": {"fast": true}}'
+);
+-- =====================================================================
+-- Test 1: Basic GROUP BY DATE(timestamp) — verify date_histogram pushdown
+-- =====================================================================
+-- EXPLAIN should show date_histogram with fixed_interval "1d", not terms.
+-- Jan 4 has no data and should NOT appear in results.
+EXPLAIN (COSTS OFF, VERBOSE, TIMING OFF)
+SELECT DATE(created_at), COUNT(*)
+FROM mock_items
+WHERE id @@@ paradedb.all()
+GROUP BY DATE(created_at);
+                                                                                                                      QUERY PLAN                                                                                                                      
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (ParadeDB Aggregate Scan) on public.mock_items
+   Output: date(created_at), pdb.agg_fn('COUNT(*)'::text)
+   Index: mock_items_idx
+   Tantivy Query: {"with_index":{"query":"all"}}
+     Applies to Aggregates: COUNT(*)
+     Group By: created_at
+     Aggregate Definition: {"grouped":{"date_histogram":{"calendar_interval":null,"extended_bounds":null,"field":"created_at","fixed_interval":"1d","format":null,"hard_bounds":null,"interval":null,"keyed":false,"min_doc_count":1,"offset":null}}}
+(7 rows)
+
+SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+FROM mock_items
+WHERE id @@@ paradedb.all()
+GROUP BY DATE(created_at)
+ORDER BY day;
+    day     | cnt 
+------------+-----
+ 01-01-2024 |   3
+ 01-02-2024 |   2
+ 01-03-2024 |   1
+ 01-05-2024 |   3
+ 01-06-2024 |   1
+(5 rows)
+
+-- =====================================================================
+-- Test 2: Correctness — pushdown OFF produces identical results
+-- =====================================================================
+SET paradedb.enable_aggregate_custom_scan TO off;
+SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+FROM mock_items
+WHERE id @@@ paradedb.all()
+GROUP BY DATE(created_at)
+ORDER BY day;
+    day     | cnt 
+------------+-----
+ 01-01-2024 |   3
+ 01-02-2024 |   2
+ 01-03-2024 |   1
+ 01-05-2024 |   3
+ 01-06-2024 |   1
+(5 rows)
+
+SET paradedb.enable_aggregate_custom_scan TO on;
+-- =====================================================================
+-- Test 3: GROUP BY DATE() with SUM and AVG aggregates
+-- =====================================================================
+EXPLAIN (COSTS OFF, VERBOSE, TIMING OFF)
+SELECT DATE(created_at), SUM(rating), AVG(rating)
+FROM mock_items
+WHERE id @@@ paradedb.all()
+GROUP BY DATE(created_at);
+                                                                                                                                                                        QUERY PLAN                                                                                                                                                                         
+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Custom Scan (ParadeDB Aggregate Scan) on public.mock_items
+   Output: date(created_at), pdb.agg_fn('SUM'::text), pdb.agg_fn('AVG'::text)
+   Index: mock_items_idx
+   Tantivy Query: {"with_index":{"query":"all"}}
+     Applies to Aggregates: SUM(rating), AVG(rating)
+     Group By: created_at
+     Aggregate Definition: {"grouped":{"aggs":{"0":{"sum":{"field":"rating","missing":null}},"1":{"avg":{"field":"rating","missing":null}}},"date_histogram":{"calendar_interval":null,"extended_bounds":null,"field":"created_at","fixed_interval":"1d","format":null,"hard_bounds":null,"interval":null,"keyed":false,"min_doc_count":1,"offset":null}}}
+(7 rows)
+
+SELECT DATE(created_at) AS day, SUM(rating) AS total, AVG(rating) AS avg_rating
+FROM mock_items
+WHERE id @@@ paradedb.all()
+GROUP BY DATE(created_at)
+ORDER BY day;
+    day     | total |    avg_rating    
+------------+-------+------------------
+ 01-01-2024 |    12 |                4
+ 01-02-2024 |     9 |              4.5
+ 01-03-2024 |     3 |                3
+ 01-05-2024 |    11 | 3.66666666666667
+ 01-06-2024 |     4 |                4
+(5 rows)
+
+-- =====================================================================
+-- Test 4: GROUP BY DATE() with WHERE filter on text field
+-- =====================================================================
+SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+FROM mock_items
+WHERE id @@@ paradedb.all()
+    AND description @@@ 'keyboard OR mouse'
+GROUP BY DATE(created_at)
+ORDER BY day;
+    day     | cnt 
+------------+-----
+ 01-01-2024 |   2
+ 01-05-2024 |   1
+(2 rows)
+
+-- =====================================================================
+-- Test 5: GROUP BY DATE() with date range filter
+-- =====================================================================
+SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+FROM mock_items
+WHERE id @@@ paradedb.all()
+    AND created_at >= '2024-01-02'
+    AND created_at < '2024-01-06'
+GROUP BY DATE(created_at)
+ORDER BY day;
+    day     | cnt 
+------------+-----
+ 01-02-2024 |   2
+ 01-03-2024 |   1
+ 01-05-2024 |   3
+(3 rows)
+
+-- =====================================================================
+-- Test 6: GROUP BY DATE() with ORDER BY count (deterministic tie-break)
+-- =====================================================================
+SELECT DATE(created_at) AS day, COUNT(*) AS cnt
+FROM mock_items
+WHERE id @@@ paradedb.all()
+GROUP BY DATE(created_at)
+ORDER BY cnt DESC, day;
+    day     | cnt 
+------------+-----
+ 01-01-2024 |   3
+ 01-05-2024 |   3
+ 01-02-2024 |   2
+ 01-03-2024 |   1
+ 01-06-2024 |   1
+(5 rows)
+
+-- =====================================================================
+-- Cleanup
+-- =====================================================================
+DROP TABLE IF EXISTS mock_items CASCADE;
+RESET paradedb.enable_aggregate_custom_scan;

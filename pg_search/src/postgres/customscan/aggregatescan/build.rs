@@ -44,7 +44,9 @@ use pgrx::pg_sys;
 use pgrx::PgList;
 use tantivy::aggregation::agg_req::Aggregations;
 use tantivy::aggregation::agg_req::{Aggregation, AggregationVariants};
-use tantivy::aggregation::bucket::{CustomOrder, OrderTarget, TermsAggregation};
+use tantivy::aggregation::bucket::{
+    CustomOrder, DateHistogramAggregationReq, OrderTarget, TermsAggregation,
+};
 use tantivy::aggregation::metric::CountAggregation;
 
 pub trait AggregationKey {
@@ -653,30 +655,39 @@ impl CollectNested<GroupedKey> for AggregateCSClause {
                 }
             });
 
-            let mut terms_agg = TermsAggregation {
-                field: column.field_name.clone(),
-                size: Some(size),
-                // Always collect all buckets per segment for accurate counts.
-                // Only the final merge output is limited to `size`.
-                segment_size: Some(max_buckets),
-                ..Default::default()
-            };
+            if let Some(interval) = &column.date_interval {
+                AggregationVariants::DateHistogram(DateHistogramAggregationReq {
+                    field: column.field_name.clone(),
+                    fixed_interval: Some(interval.clone()),
+                    min_doc_count: Some(1),
+                    ..Default::default()
+                })
+            } else {
+                let mut terms_agg = TermsAggregation {
+                    field: column.field_name.clone(),
+                    size: Some(size),
+                    // Always collect all buckets per segment for accurate counts.
+                    // Only the final merge output is limited to `size`.
+                    segment_size: Some(max_buckets),
+                    ..Default::default()
+                };
 
-            if let Some(ref agg_order) = aggregate_orderby {
-                // Only COUNT-based ordering is pushed down (detect_aggregate_orderby
-                // rejects non-COUNT targets due to Tantivy/Postgres NULL semantics mismatch).
-                terms_agg.order = Some(CustomOrder {
-                    target: OrderTarget::Count,
-                    order: agg_order.direction.into(),
-                });
-            } else if let Some(orderby) = orderby {
-                terms_agg.order = Some(CustomOrder {
-                    target: OrderTarget::Key,
-                    order: orderby.direction.into(),
-                });
+                if let Some(ref agg_order) = aggregate_orderby {
+                    // Only COUNT-based ordering is pushed down (detect_aggregate_orderby
+                    // rejects non-COUNT targets due to Tantivy/Postgres NULL semantics mismatch).
+                    terms_agg.order = Some(CustomOrder {
+                        target: OrderTarget::Count,
+                        order: agg_order.direction.into(),
+                    });
+                } else if let Some(orderby) = orderby {
+                    terms_agg.order = Some(CustomOrder {
+                        target: OrderTarget::Key,
+                        order: orderby.direction.into(),
+                    });
+                }
+
+                AggregationVariants::Terms(terms_agg)
             }
-
-            AggregationVariants::Terms(terms_agg)
         }))
     }
 }

@@ -15,8 +15,11 @@
 // You should have received a copy of the GNU Affero General Public License
 // along with this program. If not, see <http://www.gnu.org/licenses/>.
 
+use crate::nodecast;
+use crate::postgres::var::{find_one_var_and_fieldname, find_var_relation, VarContext};
 use chrono::{DateTime, NaiveDate};
 use pgrx::datum::datetime_support::DateTimeConversionError;
+use pgrx::{pg_sys, PgList};
 
 pub static MICROSECONDS_IN_SECOND: u32 = 1_000_000;
 
@@ -65,4 +68,32 @@ pub fn datetime_components_to_tantivy_date(
     Ok(tantivy::schema::OwnedValue::Date(
         micros_to_tantivy_datetime(naive_dt.timestamp_micros())?,
     ))
+}
+
+/// If `expr` is a DATE(column) function call where the inner column
+/// is resolvable to a field name, return (field_name, attno).
+pub unsafe fn extract_date_func_field(
+    var_context: VarContext,
+    expr: *mut pg_sys::Node,
+    root: *mut pg_sys::PlannerInfo,
+) -> Option<(String, pg_sys::AttrNumber)> {
+    let func_expr = nodecast!(FuncExpr, T_FuncExpr, expr)?;
+
+    // Check if the result type is DATE — this covers DATE(timestamp_col)
+    if (*func_expr).funcresulttype != pg_sys::DATEOID {
+        return None;
+    }
+
+    // Get the first argument — that's the column being cast
+    let args = PgList::<pg_sys::Node>::from_pg((*func_expr).args);
+    let inner_arg = args.get_ptr(0)?;
+
+    // Try to resolve the inner arg to a field name
+    let (var, field_name) = find_one_var_and_fieldname(var_context, inner_arg)?;
+    let (heaprelid, attno, _) = find_var_relation(var, root);
+    if heaprelid == pg_sys::InvalidOid {
+        return None;
+    }
+
+    Some((field_name.to_string(), attno))
 }
