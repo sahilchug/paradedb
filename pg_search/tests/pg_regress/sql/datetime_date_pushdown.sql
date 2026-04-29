@@ -125,6 +125,16 @@ GROUP BY DATE(created_at)
 ORDER BY cnt DESC, day;
 
 -- =====================================================================
+-- Test 7: Multi-column GROUP BY — DATE() with a second grouping column
+-- =====================================================================
+
+SELECT DATE(created_at) AS day, rating, COUNT(*) AS cnt
+FROM mock_items
+WHERE id @@@ paradedb.all()
+GROUP BY DATE(created_at), rating
+ORDER BY day, rating;
+
+-- =====================================================================
 -- Cleanup
 -- =====================================================================
 
