@@ -5094,12 +5094,13 @@ checksum = "269bca4c2591a28585d6bf10d9ed0332b7d76900a1b02bec41bdc3a2cdcda107"
 
 [[package]]
 name = "opencc-jieba-rs"
-version = "0.7.5"
+version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1fc1e7585809b7c6292ef55fbf9c4c9fcc5333d26bfbedd0b93585425472150"
+checksum = "1374548d1a5832b9a25a69aef815a5ec9128051f7f583ed0452cdfeafcb427d0"
 dependencies = [
  "include-flate",
  "jieba-rs 0.7.4",
+ "once_cell",
  "rayon",
  "rayon-core",
  "regex",
@@ -5189,7 +5190,7 @@ dependencies = [
 [[package]]
 name = "ownedbytes"
 version = "0.9.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "stable_deref_trait",
 ]
@@ -7758,7 +7759,7 @@ dependencies = [
 [[package]]
 name = "tantivy"
 version = "0.26.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "aho-corasick",
  "arc-swap",
@@ -7813,7 +7814,7 @@ dependencies = [
 [[package]]
 name = "tantivy-bitpacker"
 version = "0.9.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "bitpacking",
 ]
@@ -7821,7 +7822,7 @@ dependencies = [
 [[package]]
 name = "tantivy-columnar"
 version = "0.6.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "downcast-rs",
  "fastdivide",
@@ -7836,7 +7837,7 @@ dependencies = [
 [[package]]
 name = "tantivy-common"
 version = "0.10.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "async-trait",
  "byteorder",
@@ -7869,7 +7870,7 @@ dependencies = [
 [[package]]
 name = "tantivy-query-grammar"
 version = "0.25.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "fnv",
  "nom 7.1.3",
@@ -7881,7 +7882,7 @@ dependencies = [
 [[package]]
 name = "tantivy-sstable"
 version = "0.6.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "futures-util",
  "itertools 0.14.0",
@@ -7894,7 +7895,7 @@ dependencies = [
 [[package]]
 name = "tantivy-stacker"
 version = "0.6.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "fixedbitset",
  "murmurhash32",
@@ -7931,7 +7932,7 @@ dependencies = [
 [[package]]
 name = "tantivy-tokenizer-api"
 version = "0.6.0"
-source = "git+https://github.com/paradedb/tantivy.git?rev=242e72b78547cfd494097bf7c0c4029e27be4cc9#242e72b78547cfd494097bf7c0c4029e27be4cc9"
+source = "git+https://github.com/paradedb/tantivy.git?rev=8494dfb9f46ba8d538bcc93d1f012b48b23bb145#8494dfb9f46ba8d538bcc93d1f012b48b23bb145"
 dependencies = [
  "serde",
 ]
@@ -9461,9 +9462,9 @@ checksum = "cfe53a6657fd280eaa890a3bc59152892ffa3e30101319d168b781ed6529b049"
 
 [[package]]
 name = "yeslogic-fontconfig-sys"
-version = "6.0.1"
+version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d8b8abf912b9a29ff112e1671c97c33636903d13a69712037190e6805af4f76"
+checksum = "503a066b4c037c440169d995b869046827dbc71263f6e8f3be6d77d4f3229dbd"
 dependencies = [
  "dlib",
  "once_cell",
